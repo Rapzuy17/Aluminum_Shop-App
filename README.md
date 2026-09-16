@@ -1,74 +1,100 @@
-# BALAGAPO Aluminum & Glass Job Tracker
+# Aluminum & Glass Job Tracker
 
-A small shop app for tracking jobs (windows, doors, screens), materials, worker
+A shop app for tracking jobs (windows, doors, screens), materials, worker
 pay, budgets, pieces made vs. ordered, and shop inventory — with a dashboard
 across all jobs.
 
-This is a standalone version of the app you saw in Claude. It saves data to
-your browser's local storage instead of Claude's storage, so it can run
-anywhere: on GitHub Pages, Vercel, Netlify, or just on your own computer.
+Data is stored in a shared **Supabase** database, so it's the same data
+whether you open the app from your phone, a second phone, or a computer.
 
-## Run it locally
+## 1. Create your Supabase project (one-time)
 
-You need [Node.js](https://nodejs.org) installed (v18 or later).
+1. Go to [supabase.com](https://supabase.com), sign up free, and create a
+   new project. Pick any name/password/region — save the database password
+   somewhere safe.
+2. Once it's created, open the **SQL Editor** (left sidebar) → **New query**,
+   paste in everything from `supabase-setup.sql` in this folder, and click
+   **Run**. This creates the table that holds your app's data.
+3. Go to **Project Settings → API**. You'll need two values from this page:
+   - **Project URL**
+   - **anon public** key (not the `service_role` key — that one's secret)
+
+## 2. Run it locally
+
+You need [Node.js](https://nodejs.org) installed (v18+).
 
 ```bash
 npm install
+cp .env.example .env
+```
+
+Open `.env` and paste in your Project URL and anon key from step 1. Then:
+
+```bash
 npm run dev
 ```
 
-Then open the URL it prints (usually `http://localhost:5173`).
+Open the URL it prints. Changes you make here will now save to your shared
+Supabase database, not just your browser.
 
-## Put it on GitHub
+## 3. Put it on GitHub
 
-1. Create a new empty repository on [github.com](https://github.com/new) —
-   don't add a README, .gitignore, or license (this project already has them).
-2. In this project folder, run:
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPO.git
+git push -u origin main
+```
 
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPO.git
-   git push -u origin main
-   ```
+Your `.env` file is git-ignored on purpose — it holds credentials and should
+never be committed. `.env.example` (safe, no real keys) is what gets shared
+instead.
 
-   (Replace the URL with the one GitHub shows you after creating the repo.)
+## 4. Deploy it so it works on your phone(s)
 
-## Open it in Visual Studio Code
+This is the part that gets you a real web address you can open from any
+phone, not just `localhost` on your computer.
 
-- **If you already cloned/pushed it:** open VS Code, then
-  `File → Open Folder…` and select this project folder. Or from a terminal
-  inside the folder, just run `code .`
-- **If you want to grab it fresh from GitHub:** in VS Code, open the Command
-  Palette (`Cmd/Ctrl+Shift+P`), type **Git: Clone**, paste your repo URL, and
-  pick a folder to clone into.
-- Once open, use VS Code's built-in terminal (`` Ctrl+` ``) to run
-  `npm install` and `npm run dev` as above.
+1. Go to [vercel.com](https://vercel.com) (or [netlify.com](https://netlify.com))
+   and sign up — you can sign in directly with your GitHub account.
+2. Click **Add New → Project**, and pick your GitHub repo. It auto-detects
+   this as a Vite project — you don't need to change any build settings.
+3. Before deploying, add your environment variables (same two values as
+   your `.env` file):
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+   (Vercel: under "Environment Variables" in the import screen. Netlify:
+   Site settings → Environment variables, after the first deploy.)
+4. Click **Deploy**. You'll get a URL like `your-app.vercel.app`.
+5. Open that URL on both phones (bookmark it, or add it to your home screen
+   for an app-like icon: in your phone's browser menu, look for "Add to
+   Home Screen"). Both phones now read and write the same shared data.
 
-## Deploy it somewhere people can use it
+Any time you push new changes to GitHub, Vercel/Netlify automatically
+redeploys — no manual re-upload needed.
 
-Since it's a normal Vite + React app, any static host works:
+## Notes
 
-- **Vercel** or **Netlify**: connect your GitHub repo, they auto-detect Vite,
-  no config needed.
-- **GitHub Pages**: run `npm run build`, then deploy the generated `dist`
-  folder (e.g. with the `gh-pages` npm package, or GitHub's Pages settings
-  pointing at `dist`).
-
-## A note on data
-
-Each job and inventory item is saved to `localStorage` in your browser —
-meaning it stays on the device/browser you're using it in. It won't sync
-across devices unless you add a backend (e.g. Supabase, Firebase) later. If
-you outgrow local-only storage, that's the natural next step.
+- **Live sync:** if you add a material on one phone, the other phone
+  updates automatically within a second or two, no refresh needed.
+- **Security:** this app has no login screen — anyone with your deployed
+  URL and the anon key baked into the app could read or edit your data.
+  That's fine for a small tool used by a couple of trusted people, but if
+  you ever want to restrict access, the next step would be adding Supabase
+  Auth (sign-in) and tightening the row-level security policy.
+- **Offline:** since data now lives in the cloud, you'll need an internet
+  connection to load or save. If you want offline support later, that's
+  a bigger change worth discussing separately.
 
 ## Project structure
 
 ```
-index.html         Entry HTML page
-src/main.jsx        Mounts the app
-src/App.jsx          All app logic and UI (jobs, materials, labor, pieces,
-                     budget, dashboard, inventory)
+supabase-setup.sql    Run once in Supabase's SQL Editor
+.env.example           Template for your Supabase credentials
+index.html              Entry HTML page
+src/main.jsx             Mounts the app
+src/supabaseClient.js    Connects to your Supabase project
+src/App.jsx               All app logic and UI
 ```

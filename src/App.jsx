@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase, SHOP_DATA_ROW_ID } from "./supabaseClient";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -65,7 +66,7 @@ export default function JobTracker() {
   const [matForm, setMatForm] = useState({ category: "Aluminum", item: "", cost: "", date: todayISO() });
   const [laborForm, setLaborForm] = useState({ worker: "", rate: "", days: "1", date: todayISO() });
   const [pieceForm, setPieceForm] = useState({ type: "Window", qty: "1", label: "" });
-  const [newJobForm, setNewJobForm] = useState({ customer: "", jobType: "Window", deliveryDate: "", currency: "₱", budget: "" });
+  const [newJobForm, setNewJobForm] = useState({ customer: "", jobType: "Window", deliveryDate: "", budget: "" });
   const [invForm, setInvForm] = useState(emptyInvItem());
 
   const [matError, setMatError] = useState("");
@@ -84,54 +85,86 @@ export default function JobTracker() {
   const [editingOrders, setEditingOrders] = useState(false);
   const [orderDraft, setOrderDraft] = useState({ Window: "", Door: "", Screen: "", Other: "" });
 
+  const jobsRef = useRef([]);
+  const inventoryRef = useRef([]);
   useEffect(() => {
-    try {
-      const jr = localStorage.getItem("aluminum-glass-job-data");
-      if (jr) {
-        const parsed = JSON.parse(jr);
-        const list = Array.isArray(parsed.jobs) ? parsed.jobs : [];
+    jobsRef.current = jobs;
+  }, [jobs]);
+  useEffect(() => {
+    inventoryRef.current = inventory;
+  }, [inventory]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data, error: fetchErr } = await supabase
+          .from("shop_data")
+          .select("data")
+          .eq("id", SHOP_DATA_ROW_ID)
+          .single();
+        if (fetchErr) throw fetchErr;
+        const list = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
+        const invList = Array.isArray(data?.data?.inventory) ? data.data.inventory : [];
         setJobs(list);
+        setInventory(invList);
         setActiveId(list.length ? list[0].id : null);
         setView(list.length ? "dashboard" : "jobs");
-      } else {
+      } catch (e) {
+        setError("Couldn't load shared data. Check your Supabase setup (see README).");
         setView("jobs");
       }
-    } catch (e) {
-      setView("jobs");
-    }
-    try {
-      const ir = localStorage.getItem("aluminum-glass-inventory-data");
-      if (ir) {
-        const parsedInv = JSON.parse(ir);
-        setInventory(Array.isArray(parsedInv.items) ? parsedInv.items : []);
-      }
-    } catch (e) {
-      // no inventory yet
-    }
-    setLoaded(true);
+      setLoaded(true);
+    })();
+
+    // Live sync: if the other phone changes data, pull it in here too.
+    const channel = supabase
+      .channel("shop_data_changes")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "shop_data", filter: `id=eq.${SHOP_DATA_ROW_ID}` },
+        (payload) => {
+          const next = payload.new?.data;
+          if (!next) return;
+          if (Array.isArray(next.jobs)) setJobs(next.jobs);
+          if (Array.isArray(next.inventory)) setInventory(next.inventory);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const persistJobs = useCallback((nextJobs) => {
+  const persistJobs = useCallback(async (nextJobs) => {
     setSaveState("saving");
     try {
-      localStorage.setItem("aluminum-glass-job-data", JSON.stringify({ jobs: nextJobs }));
+      const { error: upErr } = await supabase
+        .from("shop_data")
+        .update({ data: { jobs: nextJobs, inventory: inventoryRef.current }, updated_at: new Date().toISOString() })
+        .eq("id", SHOP_DATA_ROW_ID);
+      if (upErr) throw upErr;
       setSaveState("saved");
       setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1000);
     } catch (e) {
       setSaveState("error");
-      setError("Couldn't save. Your browser storage may be full or disabled.");
+      setError("Couldn't save to the shared database. Check your connection and Supabase setup.");
     }
   }, []);
 
-  const persistInventory = useCallback((nextInv) => {
+  const persistInventory = useCallback(async (nextInv) => {
     setSaveState("saving");
     try {
-      localStorage.setItem("aluminum-glass-inventory-data", JSON.stringify({ items: nextInv }));
+      const { error: upErr } = await supabase
+        .from("shop_data")
+        .update({ data: { jobs: jobsRef.current, inventory: nextInv }, updated_at: new Date().toISOString() })
+        .eq("id", SHOP_DATA_ROW_ID);
+      if (upErr) throw upErr;
       setSaveState("saved");
       setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1000);
     } catch (e) {
       setSaveState("error");
-      setError("Couldn't save. Your browser storage may be full or disabled.");
+      setError("Couldn't save to the shared database. Check your connection and Supabase setup.");
     }
   }, []);
 
@@ -173,12 +206,12 @@ export default function JobTracker() {
     j.customer = customer;
     j.jobType = newJobForm.jobType;
     j.deliveryDate = newJobForm.deliveryDate;
-    j.currency = newJobForm.currency.trim() || "₱";
+    j.currency = "₱";
     const budgetVal = parseFloat(newJobForm.budget);
     j.budget = !isNaN(budgetVal) && budgetVal > 0 ? budgetVal : 0;
     updateJobs((prev) => [...prev, j]);
     setActiveId(j.id);
-    setNewJobForm({ customer: "", jobType: "Window", deliveryDate: "", currency: "₱", budget: "" });
+    setNewJobForm({ customer: "", jobType: "Window", deliveryDate: "", budget: "" });
     setJobError("");
     setShowNewJob(false);
     setView("jobs");
@@ -430,7 +463,7 @@ export default function JobTracker() {
       {/* Header */}
       <div style={{ background: "#1F3A4D", color: "#F5F2EA", padding: "18px 20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <div style={{ fontFamily: "var(--jt-display)", fontWeight: 700, fontSize: 18, letterSpacing: "0.01em" }}> BALAGAPO Aluminum & Glass Job Tracker</div>
+          <div style={{ fontFamily: "var(--jt-display)", fontWeight: 700, fontSize: 18, letterSpacing: "0.01em" }}>Aluminum & Glass Job Tracker</div>
           {saveState === "saving" && <span style={{ fontSize: 12, color: "#B9CBD6" }}>Saving…</span>}
           {saveState === "error" && <span style={{ fontSize: 12, color: "#E8A491" }}>Save failed</span>}
         </div>
@@ -573,10 +606,9 @@ export default function JobTracker() {
                   ))}
                 </select>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", gap: 10, marginTop: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
                 <input className="jt-input" type="date" value={newJobForm.deliveryDate} onChange={(e) => setNewJobForm((f) => ({ ...f, deliveryDate: e.target.value }))} />
                 <input className="jt-input" type="number" min="0" step="0.01" placeholder="Budget (optional)" value={newJobForm.budget} onChange={(e) => setNewJobForm((f) => ({ ...f, budget: e.target.value }))} />
-                <input className="jt-input" placeholder="₱" title="Currency symbol" value={newJobForm.currency} onChange={(e) => setNewJobForm((f) => ({ ...f, currency: e.target.value }))} />
               </div>
               {jobError && <div style={{ color: "#8A2E1E", fontSize: 13, marginTop: 8 }}>{jobError}</div>}
               {!jobError && !isNaN(parseFloat(newJobForm.budget)) && parseFloat(newJobForm.budget) >= 5000000 && (
